@@ -1,36 +1,59 @@
--- Clinical Governance Agent: PPH Implementation Schema
--- Architect: Dr. Sharon Licqurish
+/*
+  PROJECT: Clinical Governance Agent - PPH Risk Mitigation
+  AUTHOR: Dr. Sharon Licqurish
+  VERSION: 1.0.0
+  DESCRIPTION: A safety-critical relational schema designed to bridge the 
+  Implementation Gap using SQL-driven governance and NPT coherence.
+*/
 
-CREATE TABLE clinicians (
-    clinician_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    role VARCHAR(50) CHECK (role IN ('Obstetrician', 'Midwife', 'Anaesthetist', 'Junior Doctor')),
-    is_on_call BOOLEAN DEFAULT TRUE
-);
+-- 1. SECURITY & ACCESS CONTROL (Enterprise Standard)
+-- Creating a restricted role for the AI Agent to prevent 'Hallucination' at the DB level.
+CREATE ROLE clinical_agent_service;
 
+-- 2. CORE PATIENT REGISTRY
 CREATE TABLE patients (
-    patient_id SERIAL PRIMARY KEY,
-    admission_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    risk_score_initial INT CHECK (risk_score_initial BETWEEN 1 AND 10),
-    blood_type VARCHAR(5)
+    patient_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    mrn_encrypted TEXT NOT NULL, -- Privacy-First Approach
+    admission_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    current_pph_risk_tier INT DEFAULT 1,
+    CONSTRAINT risk_tier_range CHECK (current_pph_risk_tier BETWEEN 1 AND 5)
 );
 
-CREATE TABLE vitals_stream (
-    log_id SERIAL PRIMARY KEY,
-    patient_id INT REFERENCES patients(patient_id),
+-- 3. PHYSIOLOGICAL TELEMETRY (The 'Sense' Layer)
+CREATE TABLE vital_signs_stream (
+    telemetry_id SERIAL PRIMARY KEY,
+    patient_id UUID REFERENCES patients(patient_id),
     systolic_bp INT NOT NULL,
-    heart_rate INT NOT NULL,
+    diastolic_bp INT NOT NULL,
     estimated_blood_loss_ml INT DEFAULT 0,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Clinical Safety Guard: Prevent impossible data entry
-    CONSTRAINT physiological_bounds CHECK (systolic_bp > 0 AND heart_rate > 0)
+    recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    
+    -- CLINICAL SAFETY GUARDS (Governance Constraints)
+    -- This prevents the AI from reasoning over 'impossible' or 'noisy' data.
+    CONSTRAINT bp_physiological_limit CHECK (systolic_bp BETWEEN 30 AND 280),
+    CONSTRAINT blood_loss_safety_check CHECK (estimated_blood_loss_ml >= 0)
 );
 
-CREATE TABLE agent_governance_logs (
-    alert_id SERIAL PRIMARY KEY,
-    patient_id INT REFERENCES patients(patient_id),
-    clinician_id INT REFERENCES clinicians(clinician_id),
-    action_taken TEXT NOT NULL,
-    escalation_triggered BOOLEAN DEFAULT FALSE,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- 4. AGENTIC DECISION LOG (The 'Reason' Layer)
+-- This provides an Audit Trail for Clinical Governance.
+CREATE TABLE agent_decisions (
+    decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id UUID REFERENCES patients(patient_id),
+    npt_dimension_check TEXT, -- Coherence, Participation, etc.
+    decision_rationale TEXT NOT NULL,
+    action_triggered TEXT,
+    is_clinician_overridden BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 5. PERFORMANCE VIEWS (The 'Audit' Layer)
+-- A high-level view for senior clinicians/Board advisors.
+CREATE VIEW clinical_risk_summary AS
+SELECT 
+    p.patient_id, 
+    v.systolic_bp, 
+    v.estimated_blood_loss_ml,
+    d.action_triggered
+FROM patients p
+JOIN vital_signs_stream v ON p.patient_id = v.patient_id
+LEFT JOIN agent_decisions d ON p.patient_id = d.patient_id;
